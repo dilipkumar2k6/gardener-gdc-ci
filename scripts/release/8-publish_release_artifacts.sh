@@ -8,6 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/release/helpers/constants.sh
 source "${SCRIPT_DIR}/helpers/constants.sh"
+# shellcheck source=scripts/ci-common.sh
+source "${REPO_ROOT}/scripts/ci-common.sh"
 # shellcheck source=scripts/release/helpers/imagevector.sh
 source "${SCRIPT_DIR}/helpers/imagevector.sh"
 
@@ -95,9 +97,9 @@ for item in "${IMAGES[@]}"; do
   dst_image="${PUBLIC_REGISTRY}/${name}:${version_tag}"
 
   echo "Promoting ${src_image} -> ${dst_image}..."
-  docker pull "${src_image}"
+  retry_with_backoff docker pull "${src_image}"
   docker tag "${src_image}" "${dst_image}"
-  docker push "${dst_image}"
+  retry_with_backoff docker push "${dst_image}"
 
   PUBLISHED_IMAGES_JSON="$(jq --arg name "${name}" --arg image "${dst_image}" --arg version "${version_tag}" \
     '. + [{"component": $name, "image": $image, "version": $version}]' <<< "${PUBLISHED_IMAGES_JSON}")"
@@ -114,9 +116,9 @@ if [[ "${RELEASE_MODE}" == "snapshot" || "${EXT_NEEDS_RELEASE}" == "true" ]]; th
       chart_file="$(basename "${chart_tgz}")"
       echo "Promoting Helm chart ${chart_file} -> oci://${PUBLIC_REGISTRY}/charts..."
       if [[ -f "${HOME}/.docker/config.json" ]]; then
-        helm push --registry-config "${HOME}/.docker/config.json" "${chart_tgz}" "oci://${PUBLIC_REGISTRY}/charts"
+        retry_with_backoff helm push --registry-config "${HOME}/.docker/config.json" "${chart_tgz}" "oci://${PUBLIC_REGISTRY}/charts"
       else
-        helm push "${chart_tgz}" "oci://${PUBLIC_REGISTRY}/charts"
+        retry_with_backoff helm push "${chart_tgz}" "oci://${PUBLIC_REGISTRY}/charts"
       fi
       PUBLISHED_CHARTS_JSON="$(jq --arg chart "oci://${PUBLIC_REGISTRY}/charts/${chart_file%.tgz}" \
         '. + [$chart]' <<< "${PUBLISHED_CHARTS_JSON}")"
@@ -416,7 +418,7 @@ build_and_publish_extension_release_images() {
   for ext_img in "gardener-extension-provider-gdch" "gardener-extension-admission-gdch"; do
     local dst_image="${PUBLIC_REGISTRY}/${ext_img}:${release_ver}"
     echo "Pushing compiled release image ${dst_image} to Gardener Release Registry..."
-    docker push "${dst_image}"
+    retry_with_backoff docker push "${dst_image}"
     PUBLISHED_IMAGES_JSON="$(jq --arg name "${ext_img}" --arg image "${dst_image}" --arg version "${release_ver}" \
       '. + [{"component": $name, "image": $image, "version": $version}]' <<< "${PUBLISHED_IMAGES_JSON}")"
   done
