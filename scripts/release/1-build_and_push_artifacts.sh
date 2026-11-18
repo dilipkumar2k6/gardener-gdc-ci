@@ -244,7 +244,7 @@ push_candidate_image() {
 
   echo "Pushing candidate image ${ghcr_ref} to GitHub Container Registry..."
   docker tag "${local_image}" "${ghcr_ref}"
-  docker push "${ghcr_ref}"
+  retry_with_backoff docker push "${ghcr_ref}"
 }
 
 # Helper to package and push Helm charts with the `-helm` name suffix expected by
@@ -268,8 +268,8 @@ package_and_push_helm_chart() {
   local pkg_file="${out_dir}/${chart_name}-${chart_ver}.tgz"
 
   echo "Pushing ${pkg_file} to oci://${GHCR_REGISTRY} and oci://${GHCR_REGISTRY}/charts..."
-  helm push "${pkg_file}" "oci://${GHCR_REGISTRY}"
-  helm push "${pkg_file}" "oci://${GHCR_REGISTRY}/charts"
+  retry_with_backoff helm push "${pkg_file}" "oci://${GHCR_REGISTRY}"
+  retry_with_backoff helm push "${pkg_file}" "oci://${GHCR_REGISTRY}/charts"
 
   rm -rf "${temp_dir}"
 }
@@ -330,7 +330,7 @@ awk '
   { print }
 ' "${CLUSTERROLE_FILE}" > "${CLUSTERROLE_FILE}.tmp" && mv "${CLUSTERROLE_FILE}.tmp" "${CLUSTERROLE_FILE}"
 helm package "${GARDENER_TEMP_DIR}/charts/gardener/gardenlet" --version "${GARDENLET_CHART_VERSION}" --destination "${TEST_CHARTS_OUT_DIR}"
-helm push "${TEST_CHARTS_OUT_DIR}/gardenlet-${GARDENLET_CHART_VERSION}.tgz" "oci://${GHCR_REGISTRY}/private-cloud"
+retry_with_backoff helm push "${TEST_CHARTS_OUT_DIR}/gardenlet-${GARDENLET_CHART_VERSION}.tgz" "oci://${GHCR_REGISTRY}/private-cloud"
 rm -rf "${GARDENER_TEMP_DIR}"
 
 SHOOT_DNS_SERVICE_VERSION="$(yq -r '.gardener.externalDNSExtension.version' "${PIPELINE_CONFIG_FILE}")"
@@ -371,7 +371,7 @@ diff --git a/charts/gardener-extension-shoot-dns-service/templates/dnsman-crds.y
  kind: CustomResourceDefinition
 PATCH_EOF
 helm package "${DNS_EXT_TEMP_DIR}/charts/gardener-extension-shoot-dns-service" --version "${SHOOT_DNS_CHART_VERSION}" --destination "${TEST_CHARTS_OUT_DIR}"
-helm push "${TEST_CHARTS_OUT_DIR}/gardener-extension-shoot-dns-service-${SHOOT_DNS_CHART_VERSION}.tgz" "oci://${GHCR_REGISTRY}"
+retry_with_backoff helm push "${TEST_CHARTS_OUT_DIR}/gardener-extension-shoot-dns-service-${SHOOT_DNS_CHART_VERSION}.tgz" "oci://${GHCR_REGISTRY}"
 rm -rf "${DNS_EXT_TEMP_DIR}"
 
 CILIUM_EXT_VERSION="$(yq -r '.gardener.ciliumExtension.version' "${PIPELINE_CONFIG_FILE}")"
@@ -381,7 +381,7 @@ echo "Building and pushing gardener-extension-networking-cilium Helm chart (${CI
 CILIUM_TEMP_DIR="$(mktemp -d)"
 git clone --depth 1 --branch "${CILIUM_EXT_VERSION}" https://github.com/gardener/gardener-extension-networking-cilium.git "${CILIUM_TEMP_DIR}"
 helm package "${CILIUM_TEMP_DIR}/charts/gardener-extension-networking-cilium" --version "${CILIUM_CHART_VERSION}" --destination "${TEST_CHARTS_OUT_DIR}"
-helm push "${TEST_CHARTS_OUT_DIR}/gardener-extension-networking-cilium-${CILIUM_CHART_VERSION}.tgz" "oci://${GHCR_REGISTRY}"
+retry_with_backoff helm push "${TEST_CHARTS_OUT_DIR}/gardener-extension-networking-cilium-${CILIUM_CHART_VERSION}.tgz" "oci://${GHCR_REGISTRY}"
 rm -rf "${CILIUM_TEMP_DIR}"
 
 GARDENLINUX_EXT_VERSION="$(yq -r '.gardener.gardenlinuxExtension.version' "${PIPELINE_CONFIG_FILE}")"
@@ -391,5 +391,5 @@ echo "Building and pushing gardener-extension-os-gardenlinux Helm chart (${GARDE
 GARDENLINUX_TEMP_DIR="$(mktemp -d)"
 git clone --depth 1 --branch "${GARDENLINUX_EXT_VERSION}" https://github.com/gardener/gardener-extension-os-gardenlinux.git "${GARDENLINUX_TEMP_DIR}"
 helm package "${GARDENLINUX_TEMP_DIR}/charts/gardener-extension-os-gardenlinux" --version "${GARDENLINUX_CHART_VERSION}" --destination "${TEST_CHARTS_OUT_DIR}"
-helm push "${TEST_CHARTS_OUT_DIR}/gardener-extension-os-gardenlinux-${GARDENLINUX_CHART_VERSION}.tgz" "oci://${GHCR_REGISTRY}"
+retry_with_backoff helm push "${TEST_CHARTS_OUT_DIR}/gardener-extension-os-gardenlinux-${GARDENLINUX_CHART_VERSION}.tgz" "oci://${GHCR_REGISTRY}"
 rm -rf "${GARDENLINUX_TEMP_DIR}"

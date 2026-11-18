@@ -289,3 +289,31 @@ install_sonobuoy_cli() {
   fi
   "${SONOBUOY_PATH}" version --short || true
 }
+
+# retry_with_backoff retries a command with exponential backoff to handle transient
+# OCI registry or network failures (such as GHCR eventual-consistency 404s when
+# `helm push` tags a newly uploaded chart manifest digest).
+retry_with_backoff() {
+  local max_attempts="${RETRY_MAX_ATTEMPTS:-4}"
+  local delay="${RETRY_INITIAL_DELAY_SECONDS:-3}"
+  local attempt=1
+  local rc=0
+
+  while true; do
+    rc=0
+    "$@" || rc=$?
+    if (( rc == 0 )); then
+      return 0
+    fi
+    if (( attempt >= max_attempts )); then
+      echo "::error::Command failed after ${attempt} attempt(s) (exit ${rc}): $*" >&2
+      return "${rc}"
+    fi
+    echo "::warning::Attempt ${attempt}/${max_attempts} failed (exit ${rc}) for '$*'; retrying in ${delay}s..." >&2
+    if (( delay > 0 )); then
+      sleep "${delay}"
+      delay=$(( delay * 2 ))
+    fi
+    attempt=$(( attempt + 1 ))
+  done
+}

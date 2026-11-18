@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Google LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Unit tests for retry_with_backoff in scripts/ci-common.sh."""
+
+import os
+import stat
+import subprocess
+import tempfile
+import unittest
+
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+CI_COMMON_SH = os.path.join(REPO_ROOT, "scripts", "ci-common.sh")
+
+
+class CICommonRetryTest(unittest.TestCase):
+
+    def _run_bash(self, script_body: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env["RETRY_INITIAL_DELAY_SECONDS"] = "0"
+        if extra_env:
+            env.update(extra_env)
+        full_script = f'set -euo pipefail\nsource "{CI_COMMON_SH}"\n{script_body}\n'
+        return subprocess.run(
+            ["bash", "-c", full_script],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+    def test_succeeds_immediately_on_first_attempt(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            counter_file = os.path.join(tmpdir, "count")
+            mock_cmd = os.path.join(tmpdir, "mock_cmd.sh")
+            with open(mock_cmd, "w", encoding="utf-8") as f:
+                f.write(
+                    "#!/usr/bin/env bash\n"
+                    f'count=$(cat "{counter_file}" 2>/dev/null || echo 0)\n'
+                    f'echo $((count + 1)) > "{counter_file}"\n'
+                    "exit 0\n"
+                )
+            os.chmod(mock_cmd, stat.S_IRWXU)
+
+            res = self._run_bash(f'retry_with_backoff "{mock_cmd}" arg1')
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            with open(counter_file, encoding="utf-8") as f:
+                self.assertEqual(int(f.read().strip()), 1)
+            self.assertNotIn("::warning::", res.stderr)
+
+    def test_retries_transient_ghcr_tag_not_found_and_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            counter_file = os.path.join(tmpdir, "count")
+            mock_helm = os.path.join(tmpdir, "mock_helm.sh")
+            with open(mock_helm, "w", encoding="utf-8") as f:
+                f.write(
+                    "#!/usr/bin/env bash\n"
+                    f'count=$(cat "{counter_file}" 2>/dev/null || echo 0)\n'
+                    "next=$((count + 1))\n"
+                    f'echo "${{next}}" > "{counter_file}"\n'
+                    "if (( next < 3 )); then\n"
+                    '  echo \'Error: failed to perform "Tag" on destination: sha256:9a553cc6: not found\' >&2\n'
+                    "  exit 1\n"
+                    "fi\n"
+                    'echo "Pushed: ghcr.io/gardener/gardener-gdc-ci/private-cloud/gardenlet:1.154.1"\n'
+                    "exit 0\n"
+                )
+            os.chmod(mock_helm, stat.S_IRWXU)
+
+            res = self._run_bash(
+                f'retry_with_backoff "{mock_helm}" push gardenlet-1.154.1.tgz oci://ghcr.io/gardener/gardener-gdc-ci/private-cloud',
+                extra_env={"RETRY_MAX_ATTEMPTS": "4"},
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            with open(counter_file, encoding="utf-8") as f:
+                self.assertEqual(int(f.read().strip()), 3)
+            self.assertIn("Attempt 1/4 failed", res.stderr)
+            self.assertIn("Attempt 2/4 failed", res.stderr)
+            self.assertIn("Pushed: ghcr.io/", res.stdout)
+
+    def test_propagates_exit_code_after_exhausting_max_attempts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            counter_file = os.path.join(tmpdir, "count")
+            mock_fail = os.path.join(tmpdir, "mock_fail.sh")
+            with open(mock_fail, "w", encoding="utf-8") as f:
+                f.write(
+                    "#!/usr/bin/env bash\n"
+                    f'count=$(cat "{counter_file}" 2>/dev/null || echo 0)\n'
+                    f'echo $((count + 1)) > "{counter_file}"\n'
+                    "exit 42\n"
+                )
+            os.chmod(mock_fail, stat.S_IRWXU)
+
+            res = self._run_bash(
+                f'retry_with_backoff "{mock_fail}" push',
+                extra_env={"RETRY_MAX_ATTEMPTS": "3"},
+            )
+            self.assertEqual(res.returncode, 42)
+            with open(counter_file, encoding="utf-8") as f:
+                self.assertEqual(int(f.read().strip()), 3)
+            self.assertIn("::error::Command failed after 3 attempt(s) (exit 42)", res.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
